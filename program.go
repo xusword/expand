@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +19,52 @@ type resultEntry struct {
 	path  string
 	size  float64
 	isDir bool
+}
+
+type matcher struct {
+	keyword    string
+	partial    string
+	spaceAsDot string
+}
+
+func NewMatcher(searchTermInput string) *matcher {
+	searchTermLower := strings.ToLower(searchTermInput)
+	spaceAsDot := strings.ReplaceAll(searchTermLower, " ", ".")
+	if spaceAsDot == searchTermLower {
+		spaceAsDot = ""
+	}
+	return &matcher{
+		keyword:    searchTermLower,
+		partial:    getPartialKeyword(searchTermLower),
+		spaceAsDot: spaceAsDot,
+	}
+}
+
+func getPartialKeyword(str string) string {
+	_, rSize := utf8.DecodeLastRuneInString(str)
+
+	if rSize <= 1 {
+		return "" // not big char
+	} else {
+		if utf8.RuneCountInString(str) > 2 {
+			return str[0 : len(str)-rSize]
+		} else {
+			return "" // only 1 or 2 big chars
+		}
+	}
+}
+
+func (m *matcher) isMatch(fName string, parentName string) bool {
+	fnameLower := strings.ToLower(fName)
+	if strings.Contains(fnameLower, m.keyword) {
+		return true
+	} else if m.spaceAsDot != "" && strings.Contains(fnameLower, m.spaceAsDot) {
+		return true
+	} else if m.partial != "" && strings.Contains(fnameLower, m.partial) {
+		fmt.Printf("[WARN] partial match %s/%s\n", parentName, fName)
+		// return false captured later
+	}
+	return false
 }
 
 func (r *searchResult) add(path string, size int64, isDir bool) {
@@ -62,20 +107,6 @@ func init() {
 	}
 }
 
-func getPartialKeyword(str string) string {
-	_, rSize := utf8.DecodeLastRuneInString(str)
-
-	if rSize <= 1 {
-		return "" // not big char
-	} else {
-		if utf8.RuneCountInString(str) > 2 {
-			return str[0 : len(str)-rSize]
-		} else {
-			return "" // only 1 or 2 big chars
-		}
-	}
-}
-
 func main() {
 	var searchTerm string
 	scanner := bufio.NewScanner(os.Stdin)
@@ -92,12 +123,11 @@ func main() {
 		searchTerm = scanner.Text()
 	}
 	results := &searchResult{}
-	searchTermLower := strings.ToLower(searchTerm)
-	partialKeyword := getPartialKeyword(searchTermLower)
+	m := NewMatcher(searchTerm)
 	for drive := 'D'; drive <= 'Z'; drive++ {
 		drivePath := fmt.Sprintf("%c:\\", drive)
 		if _, err := os.Open(drivePath); err == nil {
-			getDir(searchTermLower, partialKeyword, []string{drivePath}, results)
+			getDir(m, []string{drivePath}, results)
 		}
 	}
 	fmt.Printf("%d files\n", results.count)
@@ -123,7 +153,7 @@ func main() {
 		m3u_path := filepath.Join(".results", filename+".m3u")
 		// race condition: ctrl + c kills the program from another thread, sleep before opening file
 		time.Sleep(100 * time.Millisecond)
-		keywordLower := strings.ToLower(keyword)
+		subquery := NewMatcher(keyword)
 		func() {
 			f, err := os.Create(path)
 			if err != nil {
@@ -145,7 +175,7 @@ func main() {
 			}()
 			for i, s := range results.content {
 				path := s.path
-				if isMatch("[NONE]", path, keywordLower, "") {
+				if subquery.isMatch(path, "[NOTE: no partent is given in subqueries]") {
 					if s.isDir {
 						if i == len(results.content)-1 || !strings.HasPrefix(results.content[i+1].path, s.path) {
 							printUtf16(f, "%s\n", path)
@@ -176,31 +206,25 @@ func printUtf16(f *os.File, s string, args ...interface{}) {
 	f.WriteString(str)
 }
 
-func getDir(keyword string, partialKeyword string, dirs []string, results *searchResult) {
+func getDir(m *matcher, dirs []string, results *searchResult) {
 	dirName := filepath.Join(dirs...)
-	files, _ := ioutil.ReadDir(dirName)
+	files, _ := os.ReadDir(dirName)
 	for _, f := range files {
-		if isMatch(dirName, f.Name(), keyword, partialKeyword) {
+		if m.isMatch(f.Name(), dirName) {
 			target := filepath.Join(dirName, f.Name())
 			if f.IsDir() {
 				addAll(target, results)
 			} else {
-				results.add(target, f.Size(), false)
+				fInfo, fErr := f.Info()
+				if fErr != nil {
+					fmt.Printf("[Error] Error getting file info %f", fErr)
+				}
+				results.add(target, fInfo.Size(), false)
 			}
 		} else if f.IsDir() {
-			getDir(keyword, partialKeyword, append(dirs, f.Name()), results)
+			getDir(m, append(dirs, f.Name()), results)
 		}
 	}
-}
-
-func isMatch(dirName string, fname string, keyword string, partialKeyword string) bool {
-	fnameLower := strings.ToLower(fname)
-	if strings.Contains(fnameLower, keyword) {
-		return true
-	} else if partialKeyword != "" && strings.Contains(fnameLower, partialKeyword) {
-		fmt.Printf("[WARN] partial match %s/%s\n", dirName, fname)
-	}
-	return false
 }
 
 func addAll(dir string, results *searchResult) {
