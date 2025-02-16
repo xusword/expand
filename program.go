@@ -22,21 +22,33 @@ type resultEntry struct {
 }
 
 type matcher struct {
-	keyword    string
-	partial    string
-	spaceAsDot string
+	keywords []string
+	partials []string
 }
 
 func NewMatcher(searchTermInput string) *matcher {
 	searchTermLower := strings.ToLower(searchTermInput)
-	spaceAsDot := strings.ReplaceAll(searchTermLower, " ", ".")
-	if spaceAsDot == searchTermLower {
-		spaceAsDot = ""
+	searchTermTokens := strings.Split(searchTermLower, "=")
+
+	derivedTerms := []string{}
+	for _, term := range searchTermTokens {
+		spaceAsDot := strings.ReplaceAll(term, " ", ".")
+		if spaceAsDot != term {
+			derivedTerms = append(derivedTerms, spaceAsDot)
+		}
 	}
+
+	partials := []string{}
+	for _, term := range searchTermTokens {
+		partial := getPartialKeyword(term)
+		if partial != "" {
+			partials = append(partials, partial)
+		}
+	}
+
 	return &matcher{
-		keyword:    searchTermLower,
-		partial:    getPartialKeyword(searchTermLower),
-		spaceAsDot: spaceAsDot,
+		keywords: append(searchTermTokens, derivedTerms...),
+		partials: partials,
 	}
 }
 
@@ -56,13 +68,16 @@ func getPartialKeyword(str string) string {
 
 func (m *matcher) isMatch(fName string, parentName string) bool {
 	fnameLower := strings.ToLower(fName)
-	if strings.Contains(fnameLower, m.keyword) {
-		return true
-	} else if m.spaceAsDot != "" && strings.Contains(fnameLower, m.spaceAsDot) {
-		return true
-	} else if m.partial != "" && strings.Contains(fnameLower, m.partial) {
-		fmt.Printf("[WARN] partial match %s/%s\n", parentName, fName)
-		// return false captured later
+	for _, keyword := range m.keywords {
+		if strings.Contains(fnameLower, keyword) {
+			return true
+		}
+	}
+	for _, partial := range m.partials {
+		if strings.Contains(fnameLower, partial) {
+			fmt.Printf("[WARN] partial match %s/%s\n", parentName, fName)
+			// return false captured later
+		}
 	}
 	return false
 }
@@ -82,11 +97,18 @@ func (r *searchResult) add(path string, size int64, isDir bool) {
 var playable map[string]bool = map[string]bool{}
 var unplayable map[string]bool = map[string]bool{}
 
+func controlledPanic(err error) {
+	fmt.Printf("%+v", err)
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	panic(err)
+}
+
 func fromFile(filename string) []string {
 	result := []string{}
 	f, err := os.Open(filename)
 	if err != nil {
-		panic(err)
+		controlledPanic(err)
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -115,10 +137,10 @@ func main() {
 	} else {
 		fmt.Print("Search term: ")
 		if !scanner.Scan() {
-			panic("Scanner did not return")
+			controlledPanic(fmt.Errorf("Scanner did not return"))
 		}
 		if scanner.Err() != nil {
-			panic(scanner.Err())
+			controlledPanic(scanner.Err())
 		}
 		searchTerm = scanner.Text()
 	}
@@ -135,7 +157,7 @@ func main() {
 		fmt.Print("Keyword: (empty for all, or print all)\n")
 		scanner.Scan()
 		if scanner.Err() != nil {
-			panic(scanner.Err())
+			controlledPanic(scanner.Err())
 		}
 		keyword := scanner.Text()
 		if keyword == "just print" {
@@ -157,11 +179,11 @@ func main() {
 		func() {
 			f, err := os.Create(path)
 			if err != nil {
-				panic(err)
+				controlledPanic(err)
 			}
 			m3u_f, err := os.Create(m3u_path)
 			if err != nil {
-				panic(err)
+				controlledPanic(err)
 			}
 			defer func() {
 				close_err := f.Close()
@@ -230,7 +252,7 @@ func getDir(m *matcher, dirs []string, results *searchResult) {
 func addAll(dir string, results *searchResult) {
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info == nil {
-			panic("Nil info: \"" + path + "\"")
+			controlledPanic(fmt.Errorf("Nil info: \"" + path + "\""))
 		}
 		if info.IsDir() {
 			results.add(path, 0, true)
