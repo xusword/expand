@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -129,6 +130,13 @@ func init() {
 	}
 }
 
+func canonicalizeSearchTerms(term string) string {
+	tokens := strings.Split(term, "=")
+	sort.Strings(tokens)
+	ordered := strings.Join(tokens, "=")
+	return ordered
+}
+
 func main() {
 	var searchTerm string
 	scanner := bufio.NewScanner(os.Stdin)
@@ -137,7 +145,7 @@ func main() {
 	} else {
 		fmt.Print("Search term: ")
 		if !scanner.Scan() {
-			controlledPanic(fmt.Errorf("Scanner did not return"))
+			controlledPanic(fmt.Errorf("scanner did not return"))
 		}
 		if scanner.Err() != nil {
 			controlledPanic(scanner.Err())
@@ -167,7 +175,7 @@ func main() {
 			continue
 		}
 		if len(keyword) == 0 {
-			keyword = searchTerm
+			keyword = canonicalizeSearchTerms(searchTerm)
 		}
 		filename := keyword
 		os.Mkdir(".results", 0700)
