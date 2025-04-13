@@ -185,6 +185,7 @@ func main() {
 		time.Sleep(100 * time.Millisecond)
 		subquery := NewMatcher(keyword)
 		func() {
+			// put this in a function to force defer close to happen
 			f, err := os.Create(path)
 			if err != nil {
 				controlledPanic(err)
